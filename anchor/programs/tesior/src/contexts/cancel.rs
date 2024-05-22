@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token::{
-        Mint, Token, TokenAccount,
+        close_account, transfer_checked, CloseAccount, Mint, Token, TokenAccount, TransferChecked,
     },
 };
 
@@ -37,4 +37,41 @@ pub struct Cancel<'info> {
     associated_token_program: Program<'info, AssociatedToken>,
     token_program: Program<'info, Token>,
     system_program: Program<'info, System>,
+}
+
+impl<'info> Cancel<'info> {
+    pub fn refund_and_close_vault(&mut self) -> Result<()> {
+        let signer_seeds: [&[&[u8]]; 1] = [&[
+            b"state",
+            &self.escrow.seed.to_le_bytes()[..],
+            &[self.escrow.bump],
+        ]];
+
+        transfer_checked(
+            self.into_refund_context().with_signer(&signer_seeds),
+            self.escrow.initializer_amount,
+            self.mint_a.decimals,
+        )?;
+
+        close_account(self.into_close_context().with_signer(&signer_seeds))
+    }
+
+    fn into_refund_context(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
+        let cpi_accounts = TransferChecked {
+            from: self.vault.to_account_info(),
+            mint: self.mint_a.to_account_info(),
+            to: self.initializer_ata_a.to_account_info(),
+            authority: self.escrow.to_account_info(),
+        };
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    }
+
+    fn into_close_context(&self) -> CpiContext<'_, '_, '_, 'info, CloseAccount<'info>> {
+        let cpi_accounts = CloseAccount {
+            account: self.vault.to_account_info(),
+            destination: self.initializer.to_account_info(),
+            authority: self.escrow.to_account_info(),
+        };
+        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+    }
 }
